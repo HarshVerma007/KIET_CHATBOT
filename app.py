@@ -73,7 +73,7 @@ st.markdown(
 )
 
 # ========== Header ==========
-st.markdown('<div class="header-title">🤖 KIET-BOT</div>', unsafe_allow_html=True)
+st.markdown('<div class="header-title">🤖 KIET GPT</div>', unsafe_allow_html=True)
 st.markdown('<div class="subheader">Ask me anything about KIET!</div>', unsafe_allow_html=True)
 
 # ========== GENAI SETUP ==========
