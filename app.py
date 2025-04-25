@@ -1,22 +1,18 @@
 import streamlit as st
 import google.generativeai as genai
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
 import faiss
 import numpy as np
+import nltk
+from nltk.tokenize import sent_tokenize
 
 # ========== CONFIG ==========
 st.set_page_config(page_title="KIET Chatbot", page_icon="🤖", layout="centered")
 
-# --- Custom CSS ---
+# ========== Styling ==========
 st.markdown(
     """
     <style>
-    body {
-        background-color: #0e1117;
-        color: white;
-    }
-
+    body { background-color: #0e1117; color: white; }
     .stButton > button {
         background-color: #ff4b4b;
         color: white;
@@ -27,25 +23,13 @@ st.markdown(
         border: none;
         font-size: 16px;
     }
-
-    .stButton > button:hover {
-        background-color: #ff3333;
-        color: white;
-        transform: scale(1.05);
-    }
-
-    .stButton > button:active {
-        background-color: #cc2929;
-        color: white;
-    }
-
+    .stButton > button:hover { background-color: #ff3333; transform: scale(1.05); }
     .stTextInput input {
         border: 1px solid #888;
         border-radius: 8px;
         padding: 0.5em;
         font-size: 16px;
     }
-
     .response {
         background-color: #262730;
         padding: 1em;
@@ -53,14 +37,12 @@ st.markdown(
         margin-top: 10px;
         font-size: 16px;
     }
-
     .header-title {
         font-size: 40px;
         font-weight: bold;
         color: white;
         text-align: center;
     }
-
     .subheader {
         font-size: 18px;
         color: #bbbbbb;
@@ -81,43 +63,41 @@ API_KEY = "AIzaSyDer9CWKorC7XpCnZ1XDKPuVRuT8NEus48"
 genai.configure(api_key=API_KEY)
 model = genai.GenerativeModel("gemini-1.5-flash")
 
-# ========== LOAD TEXT ==========
+# ========== Load and Chunk Text ==========
 @st.cache_data
 def load_textbook(file_path):
     with open(file_path, "r", encoding="utf-8") as f:
         return f.read()
 
+nltk.download('punkt')
+
+def split_text_by_sentences(text, chunk_size=3):
+    sentences = sent_tokenize(text)
+    return [" ".join(sentences[i:i+chunk_size]) for i in range(0, len(sentences), chunk_size)]
+
 text = load_textbook("kiet_textbook.txt")
+chunks = split_text_by_sentences(text)
 
-# ========== SPLIT TEXT ==========
-def split_text(text, chunk_size=300, overlap=50):
-    chunks = []
-    start = 0
-    while start < len(text):
-        chunks.append(text[start:start + chunk_size])
-        start += chunk_size - overlap
-    return chunks
+# ========== Embedding + FAISS ==========
+def embed_text(texts):
+    return [genai.embed_content(model="models/embedding-001", content=t, task_type="retrieval_document")["embedding"] for t in texts]
 
-chunks = split_text(text)
-
-# ========== VECTORIZE ==========
 @st.cache_resource
-def vectorize_chunks(chunks):
-    vectorizer = TfidfVectorizer()
-    X = vectorizer.fit_transform(chunks).toarray().astype("float32")
-    index = faiss.IndexFlatL2(X.shape[1])
-    index.add(X)
-    return vectorizer, index
+def embed_chunks(chunks):
+    embeddings = embed_text(chunks)
+    faiss_index = faiss.IndexFlatL2(len(embeddings[0]))
+    faiss_index.add(np.array(embeddings).astype("float32"))
+    return embeddings, faiss_index
 
-vectorizer, index = vectorize_chunks(chunks)
+chunk_embeddings, index = embed_chunks(chunks)
 
-# ========== SEARCH ==========
-def search(query, vectorizer, index, chunks, top_k=3):
-    q_vec = vectorizer.transform([query]).toarray().astype("float32")
-    _, I = index.search(q_vec, top_k)
+# ========== Search ==========
+def search_semantic(query, chunks, index, top_k=3):
+    query_embedding = genai.embed_content(model="models/embedding-001", content=query, task_type="retrieval_query")["embedding"]
+    D, I = index.search(np.array([query_embedding]).astype("float32"), top_k)
     return [chunks[i] for i in I[0]]
 
-# ========== UI Logic ==========
+# ========== UI ==========
 if "last_response" not in st.session_state:
     st.session_state.last_response = ""
 if "last_query" not in st.session_state:
@@ -127,8 +107,19 @@ user_query = st.text_input("Enter your question here...", label_visibility="coll
 
 if st.button("Ask") and user_query:
     with st.spinner("Thinking..."):
-        context_chunks = search(user_query, vectorizer, index, chunks)
-        prompt = f"Use the following text to answer the question:\n\n{''.join(context_chunks)}\n\nQuestion: {user_query}"
+        context_chunks = search_semantic(user_query, chunks, index)
+        context = "\n\n".join(context_chunks)
+        prompt = f"""
+You are KIET GPT, a smart assistant created to help users learn about KIET College. Use only the provided context below to answer the question as accurately as possible.
+
+If the answer is not found in the context, reply with "I'm not sure based on the provided information."
+
+Context:
+{context}
+
+Question:
+{user_query}
+        """.strip()
 
         try:
             response = model.generate_content(prompt)
