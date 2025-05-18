@@ -5,7 +5,6 @@ import numpy as np
 import nltk
 from nltk.tokenize import sent_tokenize
 
-# ========== CONFIG ==========
 st.set_page_config(page_title="KIET Chatbot", page_icon="🤖", layout="centered")
 
 # ========== Styling ==========
